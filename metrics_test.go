@@ -19,17 +19,17 @@ func TestNewCacheMetrics(t *testing.T) {
 	if m == nil {
 		t.Fatal("NewCacheMetrics returned nil")
 	}
-	if httpcache.DefaultMetrics != m {
+	if httpcache.GetDefaultMetrics() != m {
 		t.Error("DefaultMetrics should be set to returned metrics")
 	}
 	// Reset so other tests don't get DefaultMetrics from this test
-	httpcache.DefaultMetrics = nil
+	httpcache.SetDefaultMetrics(nil)
 }
 
 func TestCacheMetrics_AllMethods(t *testing.T) {
 	reg := metrics.NewRegistry("test_httpcache_ops")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
 
 	m.RecordCacheHit("GET")
 	m.RecordCacheMiss("GET")
@@ -74,7 +74,7 @@ func TestCacheMetrics_AllMethods(t *testing.T) {
 func TestHandlerWithMetrics(t *testing.T) {
 	reg := metrics.NewRegistry("test_handler_metrics")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
 
 	upstream := &upstreamServer{
 		Body:         []byte("ok"),
@@ -117,7 +117,7 @@ func TestHandlerWithMetrics(t *testing.T) {
 func TestCleanupWithMetrics(t *testing.T) {
 	reg := metrics.NewRegistry("test_cleanup_metrics")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
 
 	now := time.Now().UTC()
 	httpcache.Clock = func() time.Time { return now }
@@ -137,7 +137,7 @@ func TestCleanupWithMetrics(t *testing.T) {
 	cache.Invalidate("k1")
 
 	// Advance time and run cleanup (uses DefaultMetrics for RecordCleanupDuration / UpdateCacheStats)
-	httpcache.DefaultMetrics = m
+	httpcache.SetDefaultMetrics(m)
 	result := cache.Cleanup()
 	if result.RemovedStaleEntries != 1 {
 		t.Logf("cleanup result: %+v", result)
@@ -147,8 +147,8 @@ func TestCleanupWithMetrics(t *testing.T) {
 func TestCacheEvictionMetrics(t *testing.T) {
 	reg := metrics.NewRegistry("test_eviction_metrics")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
-	httpcache.DefaultMetrics = m
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
+	httpcache.SetDefaultMetrics(m)
 
 	config := httpcache.DefaultCacheConfig().
 		WithMaxSize(1500).
@@ -172,7 +172,7 @@ func TestCacheEvictionMetrics(t *testing.T) {
 func TestStoreFailureMetrics(t *testing.T) {
 	reg := metrics.NewRegistry("test_store_fail_metrics")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
 
 	// Use a cache that fails on Store by using a broken body (wrong Content-Length)
 	upstream := &upstreamServer{
@@ -199,7 +199,7 @@ func TestStoreFailureMetrics(t *testing.T) {
 func TestPassUpstreamInMemoryFallback(t *testing.T) {
 	reg := metrics.NewRegistry("test_fallback")
 	m := httpcache.NewCacheMetrics(reg)
-	defer func() { httpcache.DefaultMetrics = nil }()
+	defer func() { httpcache.SetDefaultMetrics(nil) }()
 
 	// Small body so we don't need temp file; trigger in-memory path in passUpstream
 	body := []byte("tiny")

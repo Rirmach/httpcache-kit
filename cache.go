@@ -577,8 +577,8 @@ func (c *cache) evictIfNeeded(additionalSize int64) {
 		_ = c.removeEntry(entry)
 
 		// Record eviction metric
-		if DefaultMetrics != nil {
-			DefaultMetrics.RecordCacheEviction("lru")
+		if getDefaultMetrics() != nil {
+			getDefaultMetrics().RecordCacheEviction("lru")
 		}
 	}
 }
@@ -629,11 +629,11 @@ func (c *cache) Cleanup() CleanupResult {
 	result.Duration = Clock().Sub(start)
 
 	// Record cleanup duration metric
-	if DefaultMetrics != nil {
-		DefaultMetrics.RecordCleanupDuration(result.Duration.Seconds())
+	if getDefaultMetrics() != nil {
+		getDefaultMetrics().RecordCleanupDuration(result.Duration.Seconds())
 		// Update cache stats metrics
 		stats := c.Stats()
-		DefaultMetrics.UpdateCacheStats(stats)
+		getDefaultMetrics().UpdateCacheStats(stats)
 	}
 
 	return result
@@ -679,8 +679,8 @@ func (c *cache) cleanupTTLExpired() (int, int64) {
 			removed++
 
 			// Record eviction metric
-			if DefaultMetrics != nil {
-				DefaultMetrics.RecordCacheEviction("ttl")
+			if getDefaultMetrics() != nil {
+				getDefaultMetrics().RecordCacheEviction("ttl")
 			}
 		}
 
@@ -711,8 +711,8 @@ func (c *cache) enforceMaxSize() (int, int64) {
 		removed++
 
 		// Record eviction metric
-		if DefaultMetrics != nil {
-			DefaultMetrics.RecordCacheEviction("size_limit")
+		if getDefaultMetrics() != nil {
+			getDefaultMetrics().RecordCacheEviction("size_limit")
 		}
 	}
 

@@ -72,7 +72,7 @@ func NewHandlerWithOptions(cache Cache, upstream http.Handler, opts *HandlerOpti
 		cache:     cache,
 		validator: &Validator{upstream},
 		Shared:    false,
-		metrics:   DefaultMetrics,
+		metrics:   getDefaultMetrics(),
 	}
 	if opts != nil && opts.Logger != nil {
 		h.log = opts.Logger

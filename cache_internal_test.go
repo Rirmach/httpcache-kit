@@ -434,10 +434,10 @@ func TestEvictIfNeeded_TargetSizeNegative(t *testing.T) {
 }
 
 func TestEvictIfNeeded_WithMetrics(t *testing.T) {
-	prev := DefaultMetrics
-	defer func() { DefaultMetrics = prev }()
+	prev := GetDefaultMetrics()
+	defer func() { SetDefaultMetrics(prev) }()
 	reg := metrics.NewRegistry("test_evict_metrics")
-	DefaultMetrics = NewCacheMetrics(reg)
+	SetDefaultMetrics(NewCacheMetrics(reg))
 	config := DefaultCacheConfig().WithMaxSize(100).WithCleanupInterval(0)
 	cache := NewMemoryCacheWithConfig(config).(*cache)
 	defer func() { _ = cache.Close() }()
@@ -473,10 +473,10 @@ func TestCleanupLoop_TickerFires(t *testing.T) {
 }
 
 func TestCleanup_WithMetrics(t *testing.T) {
-	prev := DefaultMetrics
-	defer func() { DefaultMetrics = prev }()
+	prev := GetDefaultMetrics()
+	defer func() { SetDefaultMetrics(prev) }()
 	reg := metrics.NewRegistry("test_cleanup_metrics")
-	DefaultMetrics = NewCacheMetrics(reg)
+	SetDefaultMetrics(NewCacheMetrics(reg))
 	config := DefaultCacheConfig().WithMaxSize(200).WithCleanupInterval(0)
 	cache := NewMemoryCacheWithConfig(config)
 	defer func() { _ = cache.Close() }()

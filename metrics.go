@@ -1,6 +1,8 @@
 package httpcache
 
 import (
+	"sync/atomic"
+
 	"github.com/prometheus/client_golang/prometheus"
 	metrics "github.com/soulteary/metrics-kit"
 )
@@ -44,8 +46,31 @@ type CacheMetrics struct {
 	CacheCleanupDuration prometheus.Histogram
 }
 
-// DefaultMetrics is the default metrics instance (nil until initialized)
-var DefaultMetrics *CacheMetrics
+// defaultMetrics holds the default metrics instance (nil until initialized).
+// Accessed via getDefaultMetrics/SetDefaultMetrics to avoid data races.
+// Wrapped in a struct because atomic.Value.Store(nil) panics.
+var defaultMetrics atomic.Value
+
+type defaultMetricsHolder struct{ m *CacheMetrics }
+
+// getDefaultMetrics returns the current default metrics (nil if not set).
+func getDefaultMetrics() *CacheMetrics {
+	v := defaultMetrics.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(*defaultMetricsHolder).m
+}
+
+// GetDefaultMetrics returns the current default metrics instance (nil until initialized).
+func GetDefaultMetrics() *CacheMetrics {
+	return getDefaultMetrics()
+}
+
+// SetDefaultMetrics sets the default metrics instance (e.g. for tests).
+func SetDefaultMetrics(m *CacheMetrics) {
+	defaultMetrics.Store(&defaultMetricsHolder{m})
+}
 
 // NewCacheMetrics creates and registers cache metrics with the given registry
 func NewCacheMetrics(registry *metrics.Registry) *CacheMetrics {
@@ -110,7 +135,7 @@ func NewCacheMetrics(registry *metrics.Registry) *CacheMetrics {
 			Build(),
 	}
 
-	DefaultMetrics = m
+	SetDefaultMetrics(m)
 	return m
 }
 

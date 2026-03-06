@@ -101,7 +101,7 @@ func (cc CacheControl) String() string {
 			buf.WriteString(k + ", ")
 		}
 		for _, val := range vals {
-			buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
+			fmt.Fprintf(&buf, "%s=%q, ", k, val)
 		}
 	}
 

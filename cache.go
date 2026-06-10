@@ -13,6 +13,7 @@ import (
 	"net/textproto"
 	"os"
 	pathutil "path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,9 @@ const (
 	headerPrefix = "header/"
 	bodyPrefix   = "body/"
 	formatPrefix = "v1/"
+
+	lruEntrySnapshotsFile    = "_httpcache_kit_vfs_lru_entry_snapshots.gob"
+	lruEntrySnapshotsVersion = "v1"
 )
 
 // Returned when a resource doesn't exist
@@ -195,14 +199,71 @@ func NewDiskCacheWithConfig(dir string, config *CacheConfig) (ExtendedCache, err
 	return extCache, nil
 }
 
+// Entry snapshot
+type entrySnapshot struct {
+	Key        string
+	HashedKey  string
+	AccessedAt time.Time
+}
+
+func (s *entrySnapshot) updateToCacheEntry(e *cacheEntry) (updated bool) {
+	if e != nil && s.Key == e.key && s.HashedKey == e.hashedKey {
+		e.accessedAt = s.AccessedAt
+		return true
+	} else {
+		return false
+	}
+}
+func cacheEntryToSnapshot(e *cacheEntry) *entrySnapshot {
+	if e != nil {
+		return &entrySnapshot{
+			Key:        e.key,
+			HashedKey:  e.hashedKey,
+			AccessedAt: e.accessedAt,
+		}
+	} else {
+		return nil
+	}
+
+}
+
+// TODO: entry deserialize from vfs
+func (c *cache) serializeLRU() error {
+	// Serialize using gob
+	// Add version string to header
+	// compress using zstd
+	// Write(or override) to file
+	return nil
+}
+
+// TODO: entry serialize to vfs
+func (c *cache) deserializeLRU() (map[string]*entrySnapshot, error) {
+	// Check file and decompress
+	// Check version string in header
+	// Deserialize to map
+	// Should delete file whatever successfully deserialized
+	return nil, nil
+}
+
 // scanExistingCache scans the cache directory for existing cached files
 // and rebuilds the LRU index. This is called on startup for disk-backed caches.
 func (c *cache) scanExistingCache() error {
 	start := Clock()
 	scannedFiles := 0
+	recoveredSnapshots := 0
 	var totalSize int64
 
+	// Try to deserialize cache entry
+	useSnapshots := false
+	snapshots, err := c.deserializeLRU()
+	if err == nil {
+		useSnapshots = true
+	} else {
+		debugf("Failed to deserialize LRU snapshot due to: %s", err.Error())
+	}
+
 	// Scan body files (they contain the actual cached data)
+	entryList := []*cacheEntry{}
 	bodyDir := bodyPrefix + formatPrefix
 	if err := c.scanDirectory(bodyDir, func(hashedKey string, info os.FileInfo) {
 		// Create entry for this cached item
@@ -214,18 +275,22 @@ func (c *cache) scanExistingCache() error {
 			accessedAt: info.ModTime(),
 		}
 
+		if useSnapshots {
+			if s, ok := snapshots[entry.hashedKey]; ok {
+				if s.updateToCacheEntry(entry) {
+					recoveredSnapshots++
+				}
+			}
+		}
+
 		// Check if corresponding header file exists and add its size
 		headerPath := headerPrefix + formatPrefix + hashedKey
 		if headerInfo, err := c.fs.Stat(headerPath); err == nil {
 			entry.size += headerInfo.Size()
 		}
 
-		// Add to LRU tracking
-		c.lruMutex.Lock()
-		entry.element = c.lruList.PushBack(entry) // Push to back (oldest first for startup)
-		c.lruIndex[hashedKey] = entry
-		c.totalSize += entry.size
-		c.lruMutex.Unlock()
+		// Add to temp list for sorting
+		entryList = append(entryList, entry)
 
 		scannedFiles++
 		totalSize += entry.size
@@ -233,10 +298,23 @@ func (c *cache) scanExistingCache() error {
 		return err
 	}
 
+	// Sort entries from new to old
+	sort.Slice(entryList, func(i, j int) bool {
+		return entryList[i].accessedAt.After(entryList[j].accessedAt)
+	})
+	// Add to LRU tracking (older to last)
+	c.lruMutex.Lock()
+	for _, e := range entryList {
+		e.element = c.lruList.PushBack(e)
+		c.lruIndex[e.hashedKey] = e
+		c.totalSize += e.size
+	}
+	c.lruMutex.Unlock()
+
 	duration := Clock().Sub(start)
 	if scannedFiles > 0 {
-		debugf("scanned %d existing cache files (%d bytes) in %s",
-			scannedFiles, totalSize, duration)
+		debugf("scanned %d existing cache files (%d bytes) in %s, with %d recovered",
+			scannedFiles, totalSize, duration, recoveredSnapshots)
 	}
 
 	return nil
@@ -598,6 +676,10 @@ func (c *cache) cleanupLoop() {
 				debugf("cleanup completed: removed %d items (%d bytes), %d stale entries in %s",
 					result.RemovedItems, result.RemovedBytes, result.RemovedStaleEntries, result.Duration)
 			}
+			// entry serialize to vfs
+			if err := c.serializeLRU(); err != nil {
+				debugf("warning: failed to serialize LRU metadata: %s", err.Error())
+			}
 		case <-c.stopChan:
 			return
 		}
@@ -785,6 +867,11 @@ func (c *cache) Close() error {
 	c.closeOnce.Do(func() {
 		c.stopped = true
 		close(c.stopChan)
+
+		// entry serialize to vfs
+		if err := c.serializeLRU(); err != nil {
+			debugf("warning: failed to serialize LRU metadata: %s", err.Error())
+		}
 	})
 	return nil
 }

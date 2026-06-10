@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"container/list"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"hash"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/soulteary/vfs-kit"
 )
 
@@ -34,6 +36,7 @@ const (
 
 	lruEntrySnapshotsFile    = "_httpcache_kit_vfs_lru_entry_snapshots.gob"
 	lruEntrySnapshotsVersion = "v1"
+	lruEntrySnapshotsMagic   = "e9a22f25-dbb9-4c9f-b4ad-7d5d174c1789"
 )
 
 // Returned when a resource doesn't exist
@@ -227,22 +230,124 @@ func cacheEntryToSnapshot(e *cacheEntry) *entrySnapshot {
 
 }
 
-// TODO: entry deserialize from vfs
+// serializeLRU serializes the current LRU index to a snapshot file on the VFS.
+// It gob-encodes all entry snapshots, compresses with zstd, and writes to
+// lruEntrySnapshotsFile with a magic header and version prefix.
 func (c *cache) serializeLRU() error {
-	// Serialize using gob
-	// Add version string to header
-	// compress using zstd
-	// Write(or override) to file
+	c.lruMutex.RLock()
+	snapshots := make([]*entrySnapshot, 0, len(c.lruIndex))
+	for _, entry := range c.lruIndex {
+		if s := cacheEntryToSnapshot(entry); s != nil {
+			snapshots = append(snapshots, s)
+		}
+	}
+	c.lruMutex.RUnlock()
+
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(snapshots); err != nil {
+		return fmt.Errorf("failed to gob encode LRU snapshots: %w", err)
+	}
+
+	compressed := &bytes.Buffer{}
+	encZstd, err := zstd.NewWriter(compressed)
+	if err != nil {
+		return fmt.Errorf("failed to create zstd writer: %w", err)
+	}
+	if _, err := encZstd.Write(buf.Bytes()); err != nil {
+		_ = encZstd.Close()
+		return fmt.Errorf("failed to compress LRU snapshots: %w", err)
+	}
+	if err := encZstd.Close(); err != nil {
+		return fmt.Errorf("failed to close zstd writer: %w", err)
+	}
+
+	header := &bytes.Buffer{}
+	header.WriteString(lruEntrySnapshotsMagic)
+	header.WriteString(lruEntrySnapshotsVersion)
+
+	r := io.MultiReader(bytes.NewReader(header.Bytes()), bytes.NewReader(compressed.Bytes()))
+	if _, err := c.vfsWrite(lruEntrySnapshotsFile, r); err != nil {
+		return fmt.Errorf("failed to write LRU snapshot file: %w", err)
+	}
+
 	return nil
 }
 
-// TODO: entry serialize to vfs
+// deserializeLRU reads and restores the LRU snapshot from the VFS.
+// It validates the magic header and version, then delegates integrity
+// verification to zstd decompression. The snapshot file is removed
+// regardless of success or failure.
 func (c *cache) deserializeLRU() (map[string]*entrySnapshot, error) {
-	// Check file and decompress
-	// Check version string in header
-	// Deserialize to map
-	// Should delete file whatever successfully deserialized
-	return nil, nil
+	f, err := c.fs.Open(lruEntrySnapshotsFile)
+	if err != nil {
+		if vfs.IsNotExist(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to open LRU snapshot file: %w", err)
+	}
+
+	// Open succeeded: schedule deletion immediately to prevent stale files
+	defer func() { _ = c.fs.Remove(lruEntrySnapshotsFile) }()
+
+	data, err := io.ReadAll(f)
+	_ = f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read LRU snapshot file: %w", err)
+	}
+
+	// Validate magic header
+	magicLen := len(lruEntrySnapshotsMagic)
+	if len(data) < magicLen+1 {
+		return nil, fmt.Errorf("LRU snapshot file too short")
+	}
+	if string(data[:magicLen]) != lruEntrySnapshotsMagic {
+		return nil, fmt.Errorf("LRU snapshot file magic mismatch")
+	}
+
+	// Parse version (fixed length from constant)
+	versionLen := len(lruEntrySnapshotsVersion)
+	offset := magicLen
+	if len(data) < offset+versionLen {
+		return nil, fmt.Errorf("LRU snapshot file too short for version")
+	}
+	version := string(data[offset : offset+versionLen])
+	if version != lruEntrySnapshotsVersion {
+		return nil, fmt.Errorf("LRU snapshot version mismatch: got %s, want %s", version, lruEntrySnapshotsVersion)
+	}
+	offset += versionLen
+
+	// Remaining data is the zstd payload
+	payload := data[offset:]
+
+	// Decompress with zstd (integrity verification handled by zstd)
+	decZstd, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd reader: %w", err)
+	}
+	defer decZstd.Close()
+
+	decompressed, err := decZstd.DecodeAll(payload, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress LRU snapshot: %w", err)
+	}
+
+	// Gob decode
+	var snapshots []*entrySnapshot
+	dec := gob.NewDecoder(bytes.NewReader(decompressed))
+	if err := dec.Decode(&snapshots); err != nil {
+		return nil, fmt.Errorf("failed to gob decode LRU snapshots: %w", err)
+	}
+
+	// Convert to map
+	result := make(map[string]*entrySnapshot, len(snapshots))
+	for _, s := range snapshots {
+		if s != nil {
+			result[s.HashedKey] = s
+		}
+	}
+
+	return result, nil
 }
 
 // scanExistingCache scans the cache directory for existing cached files

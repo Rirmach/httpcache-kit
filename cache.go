@@ -204,13 +204,12 @@ func NewDiskCacheWithConfig(dir string, config *CacheConfig) (ExtendedCache, err
 
 // Entry snapshot
 type entrySnapshot struct {
-	Key        string
 	HashedKey  string
 	AccessedAt time.Time
 }
 
 func (s *entrySnapshot) updateToCacheEntry(e *cacheEntry) (updated bool) {
-	if e != nil && s.Key == e.key && s.HashedKey == e.hashedKey {
+	if e != nil && s.HashedKey == e.hashedKey {
 		e.accessedAt = s.AccessedAt
 		return true
 	} else {
@@ -220,7 +219,6 @@ func (s *entrySnapshot) updateToCacheEntry(e *cacheEntry) (updated bool) {
 func cacheEntryToSnapshot(e *cacheEntry) *entrySnapshot {
 	if e != nil {
 		return &entrySnapshot{
-			Key:        e.key,
 			HashedKey:  e.hashedKey,
 			AccessedAt: e.accessedAt,
 		}

@@ -206,26 +206,26 @@ func NewDiskCacheWithConfig(dir string, config *CacheConfig) (ExtendedCache, err
 type entrySnapshot struct {
 	HashedKey  string
 	AccessedAt time.Time
+	StoredAt   time.Time
 }
 
 func (s *entrySnapshot) updateToCacheEntry(e *cacheEntry) (updated bool) {
 	if e != nil && s.HashedKey == e.hashedKey {
 		e.accessedAt = s.AccessedAt
+		e.storedAt = s.StoredAt
 		return true
-	} else {
-		return false
 	}
+	return false
 }
 func cacheEntryToSnapshot(e *cacheEntry) *entrySnapshot {
 	if e != nil {
 		return &entrySnapshot{
 			HashedKey:  e.hashedKey,
 			AccessedAt: e.accessedAt,
+			StoredAt:   e.storedAt,
 		}
-	} else {
-		return nil
 	}
-
+	return nil
 }
 
 // serializeLRU serializes the current LRU index to a snapshot file on the VFS.
